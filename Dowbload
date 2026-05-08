@@ -1,0 +1,81 @@
+name: Download from URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Direct download URL'
+        required: true
+        type: string
+      filename:
+        description: 'Save as (filename)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Download file
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          FILENAME="${{ github.event.inputs.filename }}"
+          
+          # Auto-detect filename if not provided
+          if [ -z "$FILENAME" ]; then
+            FILENAME=$(basename "$URL" | sed 's/?.*//')
+          fi
+          
+          echo "Downloading: $URL"
+          echo "Saving as: $FILENAME"
+          
+          # Download with resume and retry
+          wget -O "$FILENAME" --tries=5 --continue --timeout=30 "$URL"
+          
+          # Verify download
+          if [ -f "$FILENAME" ] && [ -s "$FILENAME" ]; then
+            SIZE=$(ls -lh "$FILENAME" | awk '{print $5}')
+            echo "✅ Downloaded: $FILENAME ($SIZE)"
+          else
+            echo "❌ Download failed"
+            exit 1
+          fi
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: file-${{ github.run_id }}
+          name: "Downloaded File"
+          files: |
+            *
+          fail_on_unmatched_files: false
+          
+      - name: Update README
+        run: |
+          TAG="file-${{ github.run_id }}"
+          REPO="${{ github.server_url }}/${{ github.repository }}"
+          
+          cat > README.md << EOF
+          # Download Ready ✅
+          
+          ## Your file is ready!
+          
+          👉 **[Download Here](${REPO}/releases/tag/${TAG})**
+          
+          ---
+          *AVASAM Downloader*
+          EOF
+          
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add README.md
+          git commit -m "Update download link" || true
+          git push
